@@ -12,7 +12,11 @@ class RandomBot(Bot):
     """
 
     def __init__(self, seed: int = 42) -> None:
+        self.seed = seed
         self.rng: Random = Random(seed)
+
+    def __repr__(self) -> str:
+        return f"RandomBot {self.seed}"
 
     def decide(self, table: Table) -> Tuple[Action, int]:
         action = self.rng.choice(legal_actions(table))

@@ -18,6 +18,7 @@ class Table:
     hands: Tuple[Tuple[Card, ...], ...]
     stacks: Tuple[int, ...]
     current_bets: Tuple[int, ...]
+    dealer_index: int
 
     small_blind: int
     big_blind: int
@@ -29,7 +30,6 @@ class Table:
     board: Tuple[Card, ...] = ()
     street: Street = Street.PRE_FLOP
     pot: int = 0
-    dealer_index: int = 0
     current_player: int = 0
     max_bet: int = 0
     prev_raise: int = 0

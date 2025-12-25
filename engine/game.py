@@ -11,7 +11,7 @@ from engine.table import Table, Street
 from bots.base import Bot
 from bots.random_bot import RandomBot
 
-def init_table(initial_stacks: Tuple[int, ...], small_blind: int, big_blind: int, rng: Random) -> Table:
+def init_table(initial_stacks: Tuple[int, ...], rng: Random, small_blind: int, big_blind: int, dealer_index: int = 0) -> Table:
     if len(initial_stacks) < 2:
         raise ValueError("At least two players required")
     
@@ -22,6 +22,7 @@ def init_table(initial_stacks: Tuple[int, ...], small_blind: int, big_blind: int
         hands=tuple(() for _ in range(n)),
         stacks=initial_stacks,
         current_bets=tuple(0 for _ in range(n)),
+        dealer_index=dealer_index,
 
         small_blind=small_blind,
         big_blind=big_blind,
@@ -221,7 +222,7 @@ def apply_action(table: Table, action: Action, amount: int = 0) -> Table:
         return replace(new_table, current_player=_get_next_player(new_table, i))
 
 
-def finalize_hand(table: Table) -> Table:
+def finalize_hand(table: Table, verbose: bool) -> Table:
     n = len(table.hands)
 
     active_players = [i for i, f in enumerate(table.folded) if not f]
@@ -243,7 +244,7 @@ def finalize_hand(table: Table) -> Table:
         if idx == 0:
             new_stacks[winner] += remainder
 
-    print(", ".join([f"Player {i}" for i in winners]), "win(s)!", table)
+    if verbose: print(", ".join([f"Player {i}" for i in winners]), "win(s)!", table)
 
     # Reset table for next hand
     new_table = replace(
@@ -270,7 +271,7 @@ def finalize_hand(table: Table) -> Table:
     return new_table
 
 
-def play_hand(table: Table, bots: list[Bot]) -> Table:
+def play_hand(table: Table, bots: list[Bot], verbose: bool = False) -> Table:
     if len(table.hands) != len(bots):
         raise ValueError("Number of bots must match number of players at the table")
 
@@ -288,10 +289,10 @@ def play_hand(table: Table, bots: list[Bot]) -> Table:
         action, amount = bots[current_idx].decide(table)
         table = apply_action(table, action, amount)
 
-        print(action, amount, table)
+        if verbose: print(action, amount, table)
 
     # Hand finished, finalize winners
-    table = finalize_hand(table)
+    table = finalize_hand(table, verbose)
 
     return table
 
@@ -302,6 +303,6 @@ if __name__ == "__main__":
     rng = random.Random(42)
 
     initial_stacks = (1000, 1000, 1000)
-    table = init_table(initial_stacks, 10, 20, rng)
+    table = init_table(initial_stacks, rng, 10, 20)
 
-    play_hand(table, [RandomBot(seed=i) for i in range(len(initial_stacks))])
+    play_hand(table, [RandomBot(seed=i) for i in range(len(initial_stacks))], verbose=True)
