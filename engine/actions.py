@@ -1,15 +1,11 @@
 from enum import Enum
-from dataclasses import dataclass
-from typing import Optional
 
-class ActionType(Enum):
-    FOLD = 0
-    CHECK = 1
-    CALL = 2
-    BET = 3
-    RAISE = 4
+class Action(Enum):
+    FOLD = "fold"
+    CHECK = "check"
+    CALL = "call"
+    BET = "bet"
+    RAISE = "raise"
 
-@dataclass(frozen=True)
-class Action:
-    type: ActionType
-    amount: Optional[int] = None
+    def __repr__(self) -> str:
+        return self.value
