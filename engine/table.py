@@ -18,6 +18,7 @@ class Table:
     hands: Tuple[Tuple[Card, ...], ...]
     stacks: Tuple[int, ...]
     current_bets: Tuple[int, ...]
+    contributions: Tuple[int, ...]
     dealer_index: int
 
     small_blind: int
@@ -34,8 +35,6 @@ class Table:
     max_bet: int = 0
     prev_raise: int = 0
 
-    winners: Tuple[int, ...] = ()
-
     def __repr__(self) -> str:
         from engine.hand_eval import hand_eval
 
@@ -45,7 +44,7 @@ class Table:
         for i in range(n):
             status: list[str] = []
 
-            if i in self.winners or self.street != Street.SHOWDOWN and self.current_player == i:
+            if self.street != Street.SHOWDOWN and self.current_player == i:
                 status.append("->")
 
             if i == self.dealer_index:

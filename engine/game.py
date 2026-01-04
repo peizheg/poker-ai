@@ -22,6 +22,7 @@ def init_table(initial_stacks: Tuple[int, ...], rng: Random, small_blind: int, b
         hands=tuple(() for _ in range(n)),
         stacks=initial_stacks,
         current_bets=tuple(0 for _ in range(n)),
+        contributions=tuple(0 for _ in range(n)),
         dealer_index=dealer_index,
 
         small_blind=small_blind,
@@ -60,24 +61,29 @@ def post_blinds(table: Table) -> Table:
 
     new_stacks = list(table.stacks)
     new_current_bets = [0] * n
+    new_contributions = list(table.contributions)
     pot_increase = 0
 
     # Post small blind
     sb_amt = min(table.small_blind, new_stacks[sb_idx])
     new_stacks[sb_idx] -= sb_amt
     new_current_bets[sb_idx] += sb_amt
+    new_contributions[sb_idx] += sb_amt
+
     pot_increase += sb_amt
 
     # Post big blind
     bb_amt = min(table.big_blind, new_stacks[bb_idx])
     new_stacks[bb_idx] -= bb_amt
     new_current_bets[bb_idx] += bb_amt
+    new_contributions[bb_idx] += bb_amt
     pot_increase += bb_amt
 
     return replace(
         table,
         stacks=tuple(new_stacks),
         current_bets=tuple(new_current_bets),
+        contributions=tuple(new_contributions),
         pot=table.pot + pot_increase,
         current_player=(bb_idx + 1) % n,
         max_bet=bb_amt,
@@ -160,13 +166,16 @@ def apply_action(table: Table, action: Action, amount: int = 0) -> Table:
 
             new_stacks = list(table.stacks)
             new_current_bets = list(table.current_bets)
+            new_contributions = list(table.contributions)
             new_stacks[i] -= call_amount
             new_current_bets[i] += call_amount
+            new_contributions[i] += call_amount
 
             new_table = replace(
                 table,
                 stacks=tuple(new_stacks),
                 current_bets=tuple(new_current_bets),
+                contributions=tuple(new_contributions),
                 pot=table.pot + call_amount,
                 acted=tuple(idx == i or acted for idx, acted in enumerate(table.acted)),
             )
@@ -185,25 +194,40 @@ def apply_action(table: Table, action: Action, amount: int = 0) -> Table:
                 raise ValueError("Cannot raise when no bet exists")
 
             to_call = table.max_bet - table.current_bets[i]
-            total_bet = to_call + amount
-            if total_bet > table.stacks[i]:
-                raise ValueError("Bet/Raise amount exceeds player's stack")
+            desired_total = to_call + amount
+            is_all_in = desired_total >= table.stacks[i]
+
+            actual_total = min(table.stacks[i], desired_total)
+
+            raise_amount = actual_total - to_call
+
+            if not is_all_in and action == Action.RAISE:
+                if raise_amount < table.prev_raise:
+                    raise ValueError("Raise must be at least the size of the previous raise")
 
             new_stacks = list(table.stacks)
             new_current_bets = list(table.current_bets)
-            new_stacks[i] -= total_bet
-            new_current_bets[i] += total_bet
+            new_contributions = list(table.contributions)
 
-            new_prev_raise = amount if action == Action.RAISE else total_bet
+            new_stacks[i] -= actual_total
+            new_current_bets[i] += actual_total
+            new_contributions[i] += actual_total
+
+            new_max_bet = new_current_bets[i]
 
             new_table = replace(
                 table,
                 stacks=tuple(new_stacks),
                 current_bets=tuple(new_current_bets),
-                max_bet=new_current_bets[i],
-                pot=table.pot + total_bet,
-                acted=tuple(idx == i for idx in range(len(table.acted))),
-                prev_raise=new_prev_raise,
+                contributions=tuple(new_contributions),
+                max_bet=new_max_bet,
+                pot=table.pot + actual_total,
+                acted=(
+                    tuple(idx == i for idx in range(len(table.acted)))
+                    if action == Action.RAISE and raise_amount >= table.prev_raise
+                    else tuple(idx == i or acted for idx, acted in enumerate(table.acted))
+                ),
+                prev_raise=max(raise_amount, table.prev_raise),
             )
 
             if new_stacks[i] == 0:
@@ -212,39 +236,64 @@ def apply_action(table: Table, action: Action, amount: int = 0) -> Table:
                     all_in=tuple(idx == i or all_in for idx, all_in in enumerate(table.all_in)),
                 )
 
+    if sum(not f for f in new_table.folded) == 1:
+        return replace(new_table, street=Street.SHOWDOWN)
+    
+    if sum(not (f or ai) for f, ai in zip(new_table.folded, new_table.all_in)) == 0:
+        while new_table.street != Street.SHOWDOWN:
+            new_table = advance_street(new_table)
+        return new_table
 
     if _is_betting_round_complete(new_table):
-        while _is_betting_round_complete(new_table) and new_table.street != Street.SHOWDOWN:
-            new_table = advance_street(new_table)
-        
-        return new_table
-    else:
-        return replace(new_table, current_player=_get_next_player(new_table, i))
+        return advance_street(new_table)
+    
+    return replace(new_table, current_player=_get_next_player(new_table, i))
+
+
+def build_side_pots(contributions: tuple[int, ...]) -> list[tuple[int, set[int]]]:
+    remaining = {i: contributions[i] for i in range(len(contributions)) if contributions[i] > 0}
+    pots: list[tuple[int, set[int]]] = []
+
+    while remaining:
+        level = min(remaining.values())
+        eligible = set(remaining.keys())
+        pot_amount = level * len(eligible)
+
+        pots.append((pot_amount, eligible))
+
+        # subtract amount from all
+        for i in list(remaining):
+            remaining[i] -= level
+            if remaining[i] == 0: del remaining[i]
+
+    return pots
 
 
 def finalize_hand(table: Table, verbose: bool) -> Table:
     n = len(table.hands)
 
-    active_players = [i for i, f in enumerate(table.folded) if not f]
+    active_players = [i for i in range(n) if not table.folded[i]]
 
     if not active_players:
         raise ValueError("No active players to evaluate at showdown")
 
-    # Compute hand strengths for active players
-    strengths = {i: hand_eval(table.hands[i], table.board) for i in active_players}
-    max_strength = max(strengths.values())
-    winners = [i for i, s in strengths.items() if s == max_strength]
+    pots = build_side_pots(table.contributions)
 
-    # Distribute pot evenly, remainder to first winner
-    share = table.pot // len(winners)
-    remainder = table.pot % len(winners)
     new_stacks = list(table.stacks)
-    for idx, winner in enumerate(winners):
-        new_stacks[winner] += share
-        if idx == 0:
-            new_stacks[winner] += remainder
 
-    if verbose: print(", ".join([f"Player {i}" for i in winners]), "win(s)!", table)
+    for pot_amount, eligible in pots:
+        strengths = {i: hand_eval(table.hands[i], table.board) for i in eligible if i in active_players}
+        best = max(strengths.values())
+        winners = [i for i, s in strengths.items() if s == best]
+
+        share = pot_amount // len(winners)
+        remainder = pot_amount % len(winners)
+
+        # split pot among winners
+        for idx, w in enumerate(winners):
+            new_stacks[w] += share
+            if idx == 0:
+                new_stacks[w] += remainder
 
     # Reset table for next hand
     new_table = replace(
@@ -254,6 +303,7 @@ def finalize_hand(table: Table, verbose: bool) -> Table:
         hands=tuple(() for _ in range(n)),
         stacks=tuple(new_stacks),
         current_bets=tuple(0 for _ in range(n)),
+        contributions=tuple(0 for _ in range(n)),
 
         folded=tuple(False for _ in range(n)),
         all_in=tuple(False for _ in range(n)),
@@ -263,9 +313,6 @@ def finalize_hand(table: Table, verbose: bool) -> Table:
         street=Street.PRE_FLOP,
         pot=0,
         dealer_index=(table.dealer_index + 1) % n,  # rotate dealer
-
-        winners=tuple(winners),
-
     )
 
     return new_table
@@ -281,17 +328,14 @@ def play_hand(table: Table, bots: list[Bot], verbose: bool = False) -> Table:
     while table.street != Street.SHOWDOWN:
         current_idx = table.current_player
         if table.folded[current_idx] or table.all_in[current_idx]:
-            # skip inactive players
             table = replace(table, current_player=_get_next_player(table, current_idx))
             continue
 
-        # Ask the bot for its action
         action, amount = bots[current_idx].decide(table)
         table = apply_action(table, action, amount)
 
         if verbose: print(action, amount, table)
 
-    # Hand finished, finalize winners
     table = finalize_hand(table, verbose)
 
     return table

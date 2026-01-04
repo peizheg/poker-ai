@@ -7,10 +7,10 @@ from bots.easy import EasyBot
 def run_hands(num_hands: int, bots: list[Bot], rng: Random) -> None:
     n = len(bots)
 
-    profit_history: dict[int, list[int]] = {i: [] for i in range(n)}
-    win_counts: dict[int, int] = defaultdict(int)
-    bust_counts: dict[int, int] = defaultdict(int)
-    dealer_ev: dict[tuple[int, int], list[int]] = defaultdict(list)
+    profit_history: dict[Bot, list[int]] = {b: [] for b in bots}
+    win_counts: dict[Bot, int] = defaultdict(int)
+    bust_counts: dict[Bot, int] = defaultdict(int)
+    dealer_ev: dict[tuple[Bot, int], list[int]] = defaultdict(list)
 
     for hand_idx in range(num_hands):
         dealer = hand_idx % n
@@ -24,36 +24,36 @@ def run_hands(num_hands: int, bots: list[Bot], rng: Random) -> None:
             dealer_index=dealer,
         )
 
-        table = play_hand(table, bots)
+        shuffled_bots = rng.sample(bots, len(bots))
+
+        table = play_hand(table, shuffled_bots, verbose=False)
 
         # sanity check
         assert sum(table.stacks) == sum(initial_stacks)
 
-        for i in range(n):
+        for i, bot in enumerate(shuffled_bots):
             profit = table.stacks[i] - 1000
-            profit_history[i].append(profit)
-            dealer_ev[(i, dealer)].append(profit)
+            profit_history[bot].append(profit)
+            dealer_ev[(bot, i-dealer % len(bots))].append(profit)
 
             if profit > 0:
-                win_counts[i] += 1
+                win_counts[bot] += 1
             if table.stacks[i] == 0:
-                bust_counts[i] += 1
-
-
+                bust_counts[bot] += 1
 
     print(f"{"Bot Name":16s} | {"Avg P&L (99% CI)":21s} | Win rate | Bust rate")
     print("-" * 64)
-    for i, bot in enumerate(bots):
-        profits = profit_history[i]
-        print(f"{str(bot):16s} | {mean(profits):10.3f} ± {2.58 * pstdev(profits) / (num_hands) ** 0.5:8.2f} | {win_counts[i] / num_hands:8.3f} | {bust_counts[i] / num_hands:9.3f}")
+    for bot in bots:
+        profits = profit_history[bot]
+        print(f"{str(bot):16s} | {mean(profits):10.3f} ± {2.58 * pstdev(profits) / (num_hands) ** 0.5:8.2f} | {win_counts[bot] / num_hands:8.3f} | {bust_counts[bot] / num_hands:9.3f}")
 
     print("\n=== POSITIONAL EV (dealer-relative) ===")
-    print(f"{"":5s} | " + " | ".join(f"D{str(j):15s}" for j in range(n)))
-    for i in range(len(bots)):
-        print(f"P{str(i):4s}", end="")
+    print(f"{"":14s} | " + " | ".join(f"D{str(j):15s}" for j in range(n)))
+    for bot in bots:
+        print(f"{str(bot):14s}", end="")
         for j in range(len(bots)):
-            if dealer_ev[(i, j)]:
-                print(f" | {mean(dealer_ev[(i, j)]):8.2f} ± {2.58 * pstdev(dealer_ev[(i, j)]) / (len(dealer_ev[(i, j)])) ** 0.5:8.2f} ", end="")
+            if dealer_ev[(bot, j)]:
+                print(f" | {mean(dealer_ev[(bot, j)]):8.2f} ± {2.58 * pstdev(dealer_ev[(bot, j)]) / (len(dealer_ev[(bot, j)])) ** 0.5:8.2f} ", end="")
             else:
                 print("N/A", end="\t")
         print()
@@ -61,7 +61,7 @@ def run_hands(num_hands: int, bots: list[Bot], rng: Random) -> None:
 
 if __name__ == "__main__":
     import random
-    bots:list[Bot] = [RandomBot(seed=i) for i in range(4)]
+    bots:list[Bot] = [RandomBot(seed=i) for i in range(3)]
     bots += [EasyBot()]
 
     rng = random.Random(42)
